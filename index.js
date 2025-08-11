@@ -290,7 +290,7 @@ app.post('/charge', async (req, res) => {
         const stripeInstance = require('stripe')(STRIPE_SECRET_KEY, stripeOptions);
 
         const charge = await stripeInstance.charges.create({
-            amount: 299,
+            amount: 100,
             currency: 'usd',
             source: req.body.token,
             description: 'Donation'
