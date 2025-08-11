@@ -5,13 +5,11 @@ const path = require('path');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
-// Initialize Stripe without proxy first (will be re-initialized with proxy when needed)
-const stripe = require('stripe')('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');
-
 const app = express();
 
 // Configuration
 const PORT = 4242;
+const STRIPE_SECRET_KEY = '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';
 const STRIPE_PUBLISHABLE_KEY = "pk_live_51Q1nXPDITUpEwoAydNEuJchYyo9BD6CZ46PWtQWTiSFWx78BQKhkO1mTz7Ej6kvQ3zN9BNIOIYJl3bHlDB0QkK3400exTxSAFx";
 const ADMIN_CREDENTIALS = {
     'amine': 'x3x'
@@ -48,13 +46,10 @@ app.use(session({
     resave: false,
     saveUninitialized: true,
     cookie: { 
-        secure: false, // Set to true if using HTTPS
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        secure: false,
+        maxAge: 24 * 60 * 60 * 1000
     }
 }));
-
-// Static files
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Routes
 app.get('/', (req, res) => {
@@ -166,9 +161,13 @@ app.get('/', (req, res) => {
                         submitBtn.disabled = false;
                         
                         if (data.success) {
-                            alert('Payment successful!');
+                            alert('Payment successful!\\nCharge ID: ' + data.charge.id + '\\nAmount: $' + (data.charge.amount/100).toFixed(2));
                         } else {
-                            alert('Payment failed: ' + data.error);
+                            let errorMsg = 'Payment failed: ' + data.error;
+                            if (data.decline_code) {
+                                errorMsg += '\\nDecline code: ' + data.decline_code;
+                            }
+                            alert(errorMsg);
                         }
                     }).catch(function(error) {
                         submitBtn.classList.remove('loading');
@@ -270,48 +269,56 @@ app.get('/logout', (req, res) => {
 
 app.post('/charge', async (req, res) => {
     if (!req.session.loggedIn) {
-        return res.status(403).json({ success: false, error: 'Not authorized' });
+        return res.status(403).json({ 
+            success: false, 
+            error: 'Not authorized' 
+        });
     }
     
     try {
         const proxyAgent = getProxyAgent();
         const stripeOptions = {
             apiVersion: '2020-08-27',
-            maxNetworkRetries: 2
+            maxNetworkRetries: 2,
+            timeout: 20000
         };
 
         if (proxyAgent) {
             stripeOptions.httpAgent = proxyAgent;
-            stripeOptions.timeout = 15000;
         }
 
-        // Create new Stripe instance with proxy configuration
-        const stripeWithProxy = require('stripe')(
-            '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',
-            stripeOptions
-        );
+        const stripeInstance = require('stripe')(STRIPE_SECRET_KEY, stripeOptions);
 
-        const charge = await stripeWithProxy.charges.create({
+        const charge = await stripeInstance.charges.create({
             amount: 100,
             currency: 'usd',
             source: req.body.token,
             description: 'Donation'
         });
-        
-        res.json({ success: true });
+
+        res.json({ 
+            success: true,
+            charge: {
+                id: charge.id,
+                amount: charge.amount,
+                currency: charge.currency,
+                status: charge.status,
+                created: charge.created
+            }
+        });
     } catch (err) {
         console.error('Payment error:', err);
         rotateProxy();
+        
         res.json({ 
             success: false, 
-            error: err.type === 'StripeConnectionError' ? 
-                  'Connection error, please try again' : 
-                  err.message 
+            error: err.message,
+            decline_code: err.raw?.decline_code || null,
+            type: err.type || 'unknown_error'
         });
     }
 });
 
-// Test proxy route
 app.get('/test-proxy', async (req, res) => {
     try {
         const proxyAgent = getProxyAgent();
@@ -396,7 +403,7 @@ app.get('/rotate-proxy', (req, res) => {
     res.redirect('/test-proxy');
 });
 
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
     console.error('Server error:', err);
     res.status(500).send('Internal Server Error');
