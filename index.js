@@ -1,15 +1,17 @@
 const express = require('express');
 const session = require('express-session');
 const bodyParser = require('body-parser');
-const stripe = require('stripe')('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');
 const path = require('path');
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
+// Initialize Stripe without proxy first (will be re-initialized with proxy when needed)
+const stripe = require('stripe')('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');
+
 const app = express();
 
 // Configuration
-const PORT = 4243;
+const PORT = 4242;
 const STRIPE_PUBLISHABLE_KEY = "pk_live_51Q1nXPDITUpEwoAydNEuJchYyo9BD6CZ46PWtQWTiSFWx78BQKhkO1mTz7Ej6kvQ3zN9BNIOIYJl3bHlDB0QkK3400exTxSAFx";
 const ADMIN_CREDENTIALS = {
     'amine': 'x3x'
@@ -44,8 +46,15 @@ app.use(bodyParser.json());
 app.use(session({
     secret: '1GH650339',
     resave: false,
-    saveUninitialized: true
+    saveUninitialized: true,
+    cookie: { 
+        secure: false, // Set to true if using HTTPS
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
 }));
+
+// Static files
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Routes
 app.get('/', (req, res) => {
@@ -137,7 +146,6 @@ app.get('/', (req, res) => {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
             
-            // Show loading spinner
             submitBtn.classList.add('loading');
             submitBtn.disabled = true;
             
@@ -252,8 +260,12 @@ app.route('/login')
     });
 
 app.get('/logout', (req, res) => {
-    req.session.destroy();
-    res.redirect('/login');
+    req.session.destroy((err) => {
+        if (err) {
+            console.error('Session destruction error:', err);
+        }
+        res.redirect('/login');
+    });
 });
 
 app.post('/charge', async (req, res) => {
@@ -263,17 +275,21 @@ app.post('/charge', async (req, res) => {
     
     try {
         const proxyAgent = getProxyAgent();
-        const stripeConfig = {
-            apiVersion: '2020-08-27'
+        const stripeOptions = {
+            apiVersion: '2020-08-27',
+            maxNetworkRetries: 2
         };
 
         if (proxyAgent) {
-            stripeConfig.httpAgent = proxyAgent;
-            stripeConfig.timeout = 10000;
+            stripeOptions.httpAgent = proxyAgent;
+            stripeOptions.timeout = 15000;
         }
 
-        // Create a new Stripe instance with the proxy configuration
-        const stripeWithProxy = new stripe.Stripe('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', stripeConfig);
+        // Create new Stripe instance with proxy configuration
+        const stripeWithProxy = require('stripe')(
+            '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',
+            stripeOptions
+        );
 
         const charge = await stripeWithProxy.charges.create({
             amount: 100,
@@ -286,7 +302,12 @@ app.post('/charge', async (req, res) => {
     } catch (err) {
         console.error('Payment error:', err);
         rotateProxy();
-        res.json({ success: false, error: err.message });
+        res.json({ 
+            success: false, 
+            error: err.type === 'StripeConnectionError' ? 
+                  'Connection error, please try again' : 
+                  err.message 
+        });
     }
 });
 
@@ -310,13 +331,28 @@ app.get('/test-proxy', async (req, res) => {
                 <title>Proxy Test</title>
                 <style>
                     body { font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; }
-                    button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; cursor: pointer; margin: 5px; }
+                    button { 
+                        background-color: #4CAF50; 
+                        color: white; 
+                        padding: 10px 15px; 
+                        border: none; 
+                        cursor: pointer; 
+                        margin: 5px;
+                    }
+                    .proxy-info {
+                        background: #f5f5f5;
+                        padding: 10px;
+                        border-radius: 5px;
+                        margin: 10px 0;
+                    }
                 </style>
             </head>
             <body>
                 <h1>Proxy Test</h1>
-                <p>Current proxy: ${PROXIES[currentProxyIndex]}</p>
-                <p>Response IP: ${response.data.origin}</p>
+                <div class="proxy-info">
+                    <p><strong>Current proxy:</strong> ${PROXIES[currentProxyIndex]}</p>
+                    <p><strong>Your IP:</strong> ${response.data.origin}</p>
+                </div>
                 <button onclick="location.reload()">Test Again</button>
                 <button onclick="window.location.href='/rotate-proxy'">Rotate Proxy</button>
                 <p><a href="/">Back to Home</a></p>
@@ -332,12 +368,20 @@ app.get('/test-proxy', async (req, res) => {
                 <title>Proxy Test Failed</title>
                 <style>
                     body { font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; }
-                    button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; cursor: pointer; margin: 5px; }
+                    .error { color: red; }
+                    button { 
+                        background-color: #4CAF50; 
+                        color: white; 
+                        padding: 10px 15px; 
+                        border: none; 
+                        cursor: pointer; 
+                        margin: 5px;
+                    }
                 </style>
             </head>
             <body>
                 <h1>Proxy Test Failed</h1>
-                <p>Error: ${err.message}</p>
+                <p class="error">Error: ${err.message}</p>
                 <p>Rotated to next proxy automatically.</p>
                 <button onclick="location.reload()">Try Again</button>
                 <p><a href="/">Back to Home</a></p>
@@ -350,6 +394,12 @@ app.get('/test-proxy', async (req, res) => {
 app.get('/rotate-proxy', (req, res) => {
     rotateProxy();
     res.redirect('/test-proxy');
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Server error:', err);
+    res.status(500).send('Internal Server Error');
 });
 
 // Start server
