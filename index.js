@@ -8,8 +8,8 @@ const app = express();
 
 // Configuration
 const PORT = 4242;
-const STRIPE_SECRET_KEY = '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';
-const STRIPE_PUBLISHABLE_KEY = "pk_live_51QrNeY008dHd7lUqHv3h9ot0cQV9QstXIkhYKjpRpGTt4Za7KPFYga42KA6K9LGPPWJDASDNlqAPQ24WNmNIOXZk003PaEKW3t";
+const STRIPE_SECRET_KEY = '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';
+const STRIPE_PUBLISHABLE_KEY = "pk_live_51QbzeqLl4i0ezpvgMNxhBAOxYJx98hOqrZyDPD0GbbJgwW8CqCA1oFdQHMuQkv2uItfpQ6O3qifBcyw3En8TbnRy00ZWCDiHWl";
 const ADMIN_CREDENTIALS = {
     'amine': 'x3x'
 };
